@@ -192,12 +192,14 @@ KVIN.prototype.ctors = [
   Function,
   Error,
   Promise,
+  Plugin
 ];
 if (typeof URL !== 'undefined'){
   KVIN.prototype.ctors.push(URL)
 }
 
 KVIN.prototype.userCtors = {}; /**< name: implementation for user-defined constructors that are not props of global */
+KVIN.prototype.readOnlyCtor = {"PluginArray": a => Object.create(PluginArray.prototype, {}) } //"Plugin", "MimeTypeArray":, "MimeType"}; /** implement for special func */
 
 /** Take a 'prepared object' (which can be represented by JSON) and turn it
  *  into an object which resembles the object it was created from.
@@ -255,6 +257,9 @@ KVIN.prototype.unprepare = function unprepare (seen, po, position) {
   if (po.hasOwnProperty('bigint')) {
     return unprepare$bigint(po.bigint);
   }
+  // if (po.hasOwnProperty("PluginArray")) {
+  //   return unprepare$pluginarray(po.plugins)
+  // }
   if (po.hasOwnProperty('fnName')) {
     return this.unprepare$function(seen, po, position)
   }
@@ -305,8 +310,14 @@ KVIN.prototype.unprepare$object = function unprepare$object (seen, po, position)
   } else {
     constructor = this.ctors[po.ctr]
   }
-
-  if (po.hasOwnProperty('arg')) {
+  if (po.ctr in this.readOnlyCtor) {
+    if (po.hasOwnProperty('arg')) {
+    o = this.readOnlyCtor[po.ctr](arg)
+  } else {
+      o = this.readOnlyCtor[po.ctr]()
+    }
+  }
+  else if (po.hasOwnProperty('arg')) {
     o = new constructor(po.arg)
   } else {
     o = new constructor() // eslint-disable-line
@@ -363,7 +374,9 @@ function unprepare$bigint(arg) {
 function unprepare$number(arg) {
   return parseFloat(arg);
 }
-  
+  function unprepare$pluginarray(arg) {
+    return Object.create(PluginArray.prototype, arg);
+  }
 /**
  * arr:[] - Array of primitives of prepared objects
  * lst:N - repeat last element N times
@@ -585,7 +598,25 @@ function prepare$Error(o)
 
   return ret;
 }
-  
+  /**
+   * Serialize an instance of Error, preserving standard-ish non-enumerable properties
+   */
+  function prepare$Plugin(o)
+  {
+    let ret = {
+      ctr: 'Plugin',
+      ps: {},
+      arg: ""
+    };
+    ret.ps["__mimeTypes"] = [];
+    for (let prop of ['name', 'filename', 'description', 'version'])
+      if (prop in o)
+        ret.ps[prop] = o[prop];
+    for (let prop of o)
+        ret.ps["__mimeTypes"].push(prop.type);
+    return ret;
+  }
+
 /** Take an arbitrary object and turn it into a 'prepared object'.
  *  A prepared object can always be represented with JSON.
  *
@@ -642,7 +673,10 @@ KVIN.prototype.prepare =  function prepare (seen, o, where) {
     /* special-case Error to get non-enumerable properties */
     return prepare$Error(o);
   }
-
+  if (o instanceof Plugin || o instanceof this.standardObjects.Plugin) {
+    /* special-case Error to get non-enumerable properties */
+    return prepare$Plugin(o);
+  }
   if (typeof o.constructor === 'undefined') {
     console.warn('KVIN Warning: ' + where + ' is missing .constructor -- skipping')
     return prepare$undefined(o)
